@@ -38,6 +38,29 @@ def register():
 
     return jsonify({"message": "user created"}), 201
 
+@app.post("/login")
+def login():
+    data = request.get_json() or {}
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        return jsonify({"error": "username and password are required"}), 400
+
+    db = get_db()
+    # Look up the user by username
+    user = db.execute(
+        "SELECT id, username, password_hash FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+
+    # Generic failure if user is missing OR password is wrong
+    if user is None or not verify_password(user["password_hash"], password):
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    # Success: return a safe identity (no password, no hash)
+    return jsonify({"id": user["id"], "username": user["username"]}), 200
+
 def hash_password(plaintext_password: str) -> str:
     """Turn a plaintext password into a one-way hash for storage."""
     return generate_password_hash(plaintext_password)
