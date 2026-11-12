@@ -6,13 +6,22 @@ That is the point: you will add both, lesson by lesson, in Units 2 and 3.
 """
 
 import sqlite3
+import os
+import jwt
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, g, jsonify, request
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 DATABASE = "recipes.db"
 
 app = Flask(__name__)
+
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
 
 @app.post("/register")
 def register():
@@ -54,12 +63,24 @@ def login():
         (username,),
     ).fetchone()
 
-    # Generic failure if user is missing OR password is wrong
+        # Generic failure if user is missing OR password is wrong
     if user is None or not verify_password(user["password_hash"], password):
         return jsonify({"error": "Invalid username or password"}), 401
 
-    # Success: return a safe identity (no password, no hash)
-    return jsonify({"id": user["id"], "username": user["username"]}), 200
+    # Success: issue a signed token carrying the authenticated identity
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user["id"]),                # user id as a string
+        "exp": now + timedelta(hours=1),       # token expires in 1 hour
+    }
+
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
+
+    return jsonify({
+        "id": user["id"],
+        "username": user["username"],
+        "token": token,
+    }), 200
 
 def hash_password(plaintext_password: str) -> str:
     """Turn a plaintext password into a one-way hash for storage."""
