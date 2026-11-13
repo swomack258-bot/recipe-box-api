@@ -154,9 +154,11 @@ def create_recipe():
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
         print("Authenticated user id:", payload.get("sub"))
+    except jwt.ExpiredSignatureError:
+        return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Invalid or unverifiable token"}), 401
-
+  
     data = request.get_json(silent=True)
     if not data or not data.get("title") or not data.get("ingredients"):
         return jsonify({"error": "title and ingredients are required"}), 400
@@ -198,7 +200,10 @@ def update_recipe(recipe_id):
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        print("Authenticated user id:", payload.get("sub"))
+        user_id = payload.get("sub")
+        print("Authenticated user id (update):", user_id)
+    except jwt.ExpiredSignatureError:
+        return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Invalid or unverifiable token"}), 401
 
@@ -250,9 +255,11 @@ def delete_recipe(recipe_id):
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
         print("Authenticated user id:", payload.get("sub"))
+    except jwt.ExpiredSignatureError:
+        return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Invalid or unverifiable token"}), 401
-
+    
     db = get_db()
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
