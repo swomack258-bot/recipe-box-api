@@ -153,7 +153,8 @@ def create_recipe():
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        print("Authenticated user id:", payload.get("sub"))
+        user_id = payload.get("sub")
+        print("Authenticated user id:", user_id)
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
@@ -162,16 +163,18 @@ def create_recipe():
     data = request.get_json(silent=True)
     if not data or not data.get("title") or not data.get("ingredients"):
         return jsonify({"error": "title and ingredients are required"}), 400
+
     db = get_db()
     try:
         cur = db.execute(
-            "INSERT INTO recipes (title, ingredients, instructions, is_public)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO recipes (title, ingredients, instructions, is_public, owner_id)"
+            " VALUES (?, ?, ?, ?, ?)",
             (
                 data["title"],
                 data["ingredients"],
                 data.get("instructions", ""),
                 1 if data.get("is_public", True) else 0,
+                user_id,
             ),
         )
         db.commit()
@@ -181,7 +184,6 @@ def create_recipe():
         "SELECT * FROM recipes WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
     return jsonify(recipe_to_dict(row)), 201
-
 
 @app.patch("/recipes/<int:recipe_id>")
 def update_recipe(recipe_id):
@@ -200,16 +202,31 @@ def update_recipe(recipe_id):
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        print("Authenticated user id (update):", user_id)
+        user_id = int(payload.get("sub"))  # <-- cast to int here too
+        print("Authenticated user id (update):", user_id, type(user_id))
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Invalid or unverifiable token"}), 401
+ 
+    db = get_db()
 
+    # 1) Load the recipe
+    row = db.execute(
+        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "recipe not found"}), 404
+
+    # 2) Check ownership
+    if row["owner_id"] != user_id:
+        return jsonify({"error": "you do not have permission to modify this recipe"}), 403
+
+    # 3) Proceed with the update
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "a JSON body is required"}), 400
+
     fields, values = [], []
     for column in ("title", "ingredients", "instructions"):
         if column in data:
@@ -220,8 +237,9 @@ def update_recipe(recipe_id):
         values.append(1 if data["is_public"] else 0)
     if not fields:
         return jsonify({"error": "nothing to update"}), 400
+
     values.append(recipe_id)
-    db = get_db()
+
     try:
         cur = db.execute(
             f"UPDATE recipes SET {', '.join(fields)} WHERE id = ?", values
@@ -229,8 +247,11 @@ def update_recipe(recipe_id):
         db.commit()
     except sqlite3.IntegrityError:
         return jsonify({"error": "a recipe with that title already exists"}), 409
+
+    # rowcount check is now mostly redundant, but we can keep it
     if cur.rowcount == 0:
         return jsonify({"error": "recipe not found"}), 404
+
     row = db.execute(
         "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
     ).fetchone()
@@ -254,17 +275,34 @@ def delete_recipe(recipe_id):
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        print("Authenticated user id:", payload.get("sub"))
+        user_id = int(payload.get("sub"))  # <-- cast to int
+        print("Authenticated user id (delete):", user_id, type(user_id))
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
         return jsonify({"error": "Invalid or unverifiable token"}), 401
-    
+   
     db = get_db()
+
+    # 1) Load the recipe
+    row = db.execute(
+        "SELECT * FROM recipes WHERE id = ?", (recipe_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "recipe not found"}), 404
+
+    # 2) Check ownership
+    if row["owner_id"] != user_id:
+        return jsonify({"error": "you do not have permission to delete this recipe"}), 403
+
+    # 3) Perform the delete
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
+
+    # This should now always be 1, but we can leave the safety check
     if cur.rowcount == 0:
         return jsonify({"error": "recipe not found"}), 404
+
     return "", 204
 
 
