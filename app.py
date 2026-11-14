@@ -57,21 +57,22 @@ def login():
         return jsonify({"error": "username and password are required"}), 400
 
     db = get_db()
-    # Look up the user by username
+    # Look up the user by username, INCLUDING role
     user = db.execute(
-        "SELECT id, username, password_hash FROM users WHERE username = ?",
+        "SELECT id, username, password_hash, role FROM users WHERE username = ?",
         (username,),
     ).fetchone()
 
-        # Generic failure if user is missing OR password is wrong
+    # Generic failure if user is missing OR password is wrong
     if user is None or not verify_password(user["password_hash"], password):
         return jsonify({"error": "Invalid username or password"}), 401
 
-    # Success: issue a signed token carrying the authenticated identity
+    # Success: issue a signed token carrying the authenticated identity + role
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": str(user["id"]),                # user id as a string
-        "exp": now + timedelta(hours=1),       # token expires in 1 hour
+        "sub": str(user["id"]),          # user id as a string
+        "role": user["role"],            # 'user' or 'admin'
+        "exp": now + timedelta(hours=1), # token expires in 1 hour
     }
 
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
@@ -79,6 +80,7 @@ def login():
     return jsonify({
         "id": user["id"],
         "username": user["username"],
+        "role": user["role"],
         "token": token,
     }), 200
 
@@ -202,8 +204,8 @@ def update_recipe(recipe_id):
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = int(payload.get("sub"))  # <-- cast to int here too
-        print("Authenticated user id (update):", user_id, type(user_id))
+        user_id = int(payload.get("sub"))
+        role = payload.get("role")  # 'user' or 'admin'
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
@@ -219,9 +221,9 @@ def update_recipe(recipe_id):
         return jsonify({"error": "recipe not found"}), 404
 
     # 2) Check ownership
-    if row["owner_id"] != user_id:
+    if row["owner_id"] != user_id and role != "admin":
         return jsonify({"error": "you do not have permission to modify this recipe"}), 403
-
+   
     # 3) Proceed with the update
     data = request.get_json(silent=True)
     if not data:
@@ -275,8 +277,8 @@ def delete_recipe(recipe_id):
 
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = int(payload.get("sub"))  # <-- cast to int
-        print("Authenticated user id (delete):", user_id, type(user_id))
+        user_id = int(payload.get("sub"))
+        role = payload.get("role")  # 'user' or 'admin'
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Token has expired, please log in again"}), 401
     except jwt.InvalidTokenError:
@@ -292,9 +294,9 @@ def delete_recipe(recipe_id):
         return jsonify({"error": "recipe not found"}), 404
 
     # 2) Check ownership
-    if row["owner_id"] != user_id:
+    if row["owner_id"] != user_id and role != "admin":
         return jsonify({"error": "you do not have permission to delete this recipe"}), 403
-
+   
     # 3) Perform the delete
     cur = db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
     db.commit()
