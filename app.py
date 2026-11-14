@@ -196,6 +196,7 @@ def create_recipe(user_id, role):
         "SELECT * FROM recipes WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
     return jsonify(recipe_to_dict(row)), 201
+
 @app.patch("/recipes/<int:recipe_id>")
 @token_required
 def update_recipe(recipe_id, user_id, role):
