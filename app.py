@@ -23,6 +23,36 @@ app = Flask(__name__)
 
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
 
+from functools import wraps
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header:
+            return jsonify({"error": "Authorization header missing"}), 401
+
+        parts = auth_header.split()
+
+        if len(parts) != 2 or parts[0] != "Bearer":
+            return jsonify({"error": "Invalid authorization header format"}), 401
+
+        token = parts[1]
+
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+            user_id = int(payload.get("sub"))
+            role = payload.get("role")  # 'user' or 'admin'
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token has expired, please log in again"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Invalid or unverifiable token"}), 401
+
+        return f(user_id=user_id, role=role, *args, **kwargs)
+
+    return decorated
+
 @app.post("/register")
 def register():
     data = request.get_json() or {}
@@ -140,28 +170,8 @@ def get_recipe(recipe_id):
 
 
 @app.post("/recipes")
-def create_recipe():
-    auth_header = request.headers.get("Authorization")
-
-    if not auth_header:
-        return jsonify({"error": "Authorization header missing"}), 401
-
-    parts = auth_header.split()
-
-    if len(parts) != 2 or parts[0] != "Bearer":
-        return jsonify({"error": "Invalid authorization header format"}), 401
-
-    token = parts[1]
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = payload.get("sub")
-        print("Authenticated user id:", user_id)
-    except jwt.ExpiredSignatureError:
-        return jsonify({"error": "Token has expired, please log in again"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"error": "Invalid or unverifiable token"}), 401
-  
+@token_required
+def create_recipe(user_id, role):
     data = request.get_json(silent=True)
     if not data or not data.get("title") or not data.get("ingredients"):
         return jsonify({"error": "title and ingredients are required"}), 400
@@ -176,7 +186,7 @@ def create_recipe():
                 data["ingredients"],
                 data.get("instructions", ""),
                 1 if data.get("is_public", True) else 0,
-                user_id,
+                user_id,  # comes from the token_required decorator
             ),
         )
         db.commit()
@@ -186,31 +196,9 @@ def create_recipe():
         "SELECT * FROM recipes WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
     return jsonify(recipe_to_dict(row)), 201
-
 @app.patch("/recipes/<int:recipe_id>")
-def update_recipe(recipe_id):
-
-    auth_header = request.headers.get("Authorization")
-
-    if not auth_header:
-        return jsonify({"error": "Authorization header missing"}), 401
-
-    parts = auth_header.split()
-
-    if len(parts) != 2 or parts[0] != "Bearer":
-        return jsonify({"error": "Invalid authorization header format"}), 401
-
-    token = parts[1]
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = int(payload.get("sub"))
-        role = payload.get("role")  # 'user' or 'admin'
-    except jwt.ExpiredSignatureError:
-        return jsonify({"error": "Token has expired, please log in again"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"error": "Invalid or unverifiable token"}), 401
- 
+@token_required
+def update_recipe(recipe_id, user_id, role):
     db = get_db()
 
     # 1) Load the recipe
@@ -261,29 +249,8 @@ def update_recipe(recipe_id):
 
 
 @app.delete("/recipes/<int:recipe_id>")
-def delete_recipe(recipe_id):
-
-    auth_header = request.headers.get("Authorization")
-
-    if not auth_header:
-        return jsonify({"error": "Authorization header missing"}), 401
-
-    parts = auth_header.split()
-
-    if len(parts) != 2 or parts[0] != "Bearer":
-        return jsonify({"error": "Invalid authorization header format"}), 401
-
-    token = parts[1]
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
-        user_id = int(payload.get("sub"))
-        role = payload.get("role")  # 'user' or 'admin'
-    except jwt.ExpiredSignatureError:
-        return jsonify({"error": "Token has expired, please log in again"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"error": "Invalid or unverifiable token"}), 401
-   
+@token_required
+def delete_recipe(recipe_id, user_id, role):
     db = get_db()
 
     # 1) Load the recipe
